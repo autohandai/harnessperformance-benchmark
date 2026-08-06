@@ -1,0 +1,23 @@
+{
+  "name": "autohand-kv-cache-bench",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "kv-cache-bench": "src/index.ts"
+  },
+  "scripts": {
+    "benchmark": "bun run src/index.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check src test",
+    "proof": "bun test && bun run typecheck && bun run lint && bun run benchmark doctor --json"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.2.0",
+    "@earendil-works/pi-coding-agent": "0.83.0",
+    "@types/bun": "latest",
+    "cline": "3.0.48",
+    "typescript": "^5.8.3"
+  }
+}

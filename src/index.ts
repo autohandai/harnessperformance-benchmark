@@ -1,5 +1,9 @@
 #!/usr/bin/env bun
+import { mkdir, writeFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
 import { runControlRound } from "./control";
+import { buildDashboardDataset, loadReports } from "./dashboard/data";
+import { renderDashboard } from "./dashboard/render";
 import { renderDoctor, runDoctor } from "./doctor";
 import { renderMarkdownReport } from "./report";
 import { runBenchmark } from "./runner";
@@ -60,13 +64,15 @@ Usage:
   bun run benchmark -- doctor [--json]
   bun run benchmark -- control [--model openrouter/free] [--prefix-tokens 4096]
   bun run benchmark -- run [--agents autohand,pi,codex,cline] [options]
+  bun run benchmark -- dashboard [--results results] [--output results/dashboard.html]
 
 Options:
   --model <id>             OpenRouter model or router (default: openrouter/free)
   --prefix-tokens <n>      Estimated stable prefix size (default: 4096)
   --rounds <n>             Cold/warm pairs per agent (default: 1)
   --timeout-seconds <n>    Per-turn timeout (default: 180)
-  --output <directory>     Artifact root (default: results)
+  --output <directory>     Artifact root for run; output file for dashboard (default: results)
+  --results <directory>    Results directory the dashboard reads (default: results)
   --json                   Machine-readable doctor/control output
 
 The run command performs live requests. It uses OPENROUTER_API_KEY when set, or the key already configured in ~/.autohand/config.json.`;
@@ -105,6 +111,17 @@ async function main(): Promise<void> {
       };
       console.log(renderMarkdownReport(report).replace("| autohand |", "| provider-control |"));
     }
+    return;
+  }
+  if (command === "dashboard") {
+    const resultsDir = options.values.get("results") ?? "results";
+    const outputPath = resolve(options.values.get("output") ?? "results/dashboard.html");
+    const runs = await loadReports(resultsDir);
+    const html = renderDashboard(buildDashboardDataset(runs));
+    await mkdir(dirname(outputPath), { recursive: true });
+    await writeFile(outputPath, html);
+    console.error(`Rendered ${runs.length} run(s) from ${resultsDir}`);
+    console.log(outputPath);
     return;
   }
   if (command === "run") {

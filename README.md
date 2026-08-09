@@ -1,6 +1,10 @@
-# KV cache benchmark
+# Harness performance benchmark
 
-This is a cold-vs-warm prompt-cache benchmark for Autohand Code, Pi, Codex CLI, and Cline using OpenRouter. It defaults to `openrouter/free`, records provider or agent cache telemetry, and refuses to call a faster second turn a cache hit unless cached input tokens are explicitly reported.
+A cold-vs-warm prompt-cache and latency benchmark for the Autohand Code, Pi, Codex CLI, and Cline coding agents, across multiple inference providers. It records provider or agent cache telemetry, derives throughput metrics (write/read/cache-read speed, TTFT, total time), and refuses to call a faster second turn a cache hit unless cached input tokens are explicitly reported. Results render to a self-contained interactive dashboard.
+
+## Providers
+
+Beyond OpenRouter, the benchmark can target providers directly: `openrouter`, `openai`, `anthropic`, `google`, `nvidia`, `zai`. A local gateway retargets each agent's OpenAI-compatible request to the selected provider's real endpoint and injects that provider's credential, so agents keep their proven configuration and only the model id changes. Combinations that are architecturally unsupported (e.g. Anthropic's native-only wire, or Cline against a non-OpenRouter provider) are reported as `blocked`, never mis-measured. Credentials come from each provider's env var (`OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`/`GOOGLE_API_KEY`, `NVIDIA_API_KEY`, `ZAI_API_KEY`) or the matching section of `~/.autohand/config.json`.
 
 ## Why this exists
 
@@ -31,12 +35,24 @@ bun run benchmark -- control --model openrouter/free --prefix-tokens 4096
 # Benchmark all compatible installed agents. Each round is two model requests.
 bun run benchmark -- run \
   --agents autohand,pi,codex,cline \
+  --providers openrouter,nvidia \
   --model openrouter/free \
   --prefix-tokens 4096 \
   --rounds 3
+
+# Render an interactive dashboard over every run in results/.
+bun run benchmark -- dashboard --output results/dashboard.html
 ```
 
 Results are written to `results/<run-id>/report.json` and `report.md`. Raw credentials, request headers, and prompt bodies are never persisted.
+
+## Dashboard
+
+`bun run benchmark -- dashboard` scans `results/run-*/report.json` and produces a single self-contained HTML file (no CDN, no bundler): grouped bar panels for each metric, a warm-speedup step chart, an agent/provider grouping toggle, a run picker with an all-runs trend view, and a raw-measurement table. All dynamic values flow through a JSON island and `textContent`, so untrusted provider/model strings cannot inject markup.
+
+## Continuous benchmarking
+
+`.github/workflows/ci.yml` runs `bun run proof` (tests, strict typecheck, lint, offline doctor) on every push and pull request. `.github/workflows/benchmark.yml` runs the live benchmark on a schedule (and on demand), builds the dashboard, and publishes it to the `gh-pages` branch, uploading it as a workflow artifact as a fallback. Only the provider secrets you configure on the repository are exercised; the rest report `blocked`.
 
 If `OPENROUTER_API_KEY` is not exported, the benchmark can use the existing key in `~/.autohand/config.json`. The doctor reports only whether a credential is available, never its value.
 

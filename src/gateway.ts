@@ -1,7 +1,9 @@
+import { getProvider } from "./providers";
 import { extractTelemetryFromText } from "./telemetry";
-import type { GatewayTrace } from "./types";
+import type { GatewayTrace, ProviderId } from "./types";
 
 export interface GatewayOptions {
+  provider?: ProviderId;
   upstreamBaseUrl?: string;
   port?: number;
 }
@@ -56,7 +58,8 @@ function upstreamError(text: string, status: number): string {
 }
 
 export async function startGateway(options: GatewayOptions = {}): Promise<Gateway> {
-  const upstreamBaseUrl = options.upstreamBaseUrl ?? "https://openrouter.ai/api/v1";
+  const provider = options.provider ?? "openrouter";
+  const upstreamBaseUrl = options.upstreamBaseUrl ?? getProvider(provider).baseUrl;
   const traces: GatewayTrace[] = [];
   const waiters: TraceWaiter[] = [];
 
@@ -99,7 +102,9 @@ export async function startGateway(options: GatewayOptions = {}): Promise<Gatewa
       const headers = new Headers(request.headers);
       headers.delete("host");
       headers.delete("content-length");
-      headers.set("x-openrouter-cache", "false");
+      // OpenRouter has a separate identical-response cache that would masquerade as a
+      // prompt-cache hit; disable it. Other providers have no such response cache.
+      if (provider === "openrouter") headers.set("x-openrouter-cache", "false");
 
       try {
         const upstreamResponse = await fetch(targetUrl(upstreamBaseUrl, incomingUrl), {

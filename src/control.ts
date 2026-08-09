@@ -14,6 +14,7 @@ export interface ControlOptions {
 function measurement(phase: "cold" | "warm", elapsedMs: number, trace: GatewayTrace): TurnMeasurement {
   return {
     phase,
+    provider: "openrouter",
     elapsedMs,
     status: trace.statusCode >= 200 && trace.statusCode < 300 ? "completed" : "failed",
     telemetrySource: "provider",

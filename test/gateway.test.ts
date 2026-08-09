@@ -58,6 +58,29 @@ describe("OpenRouterGateway", () => {
     expect(trace.elapsedMs).toBeGreaterThanOrEqual(0);
   });
 
+  it("does not inject the OpenRouter response-cache header for other providers", async () => {
+    let responseCache = "absent";
+    const upstream = Bun.serve({
+      port: 0,
+      fetch(request) {
+        responseCache = request.headers.get("x-openrouter-cache") ?? "absent";
+        return Response.json({ usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 2 } });
+      },
+    });
+    servers.push(upstream);
+    const gateway = await startGateway({ provider: "anthropic", upstreamBaseUrl: upstream.url.toString() });
+    gateways.push(gateway);
+
+    const response = await fetch(`${gateway.baseUrl}/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "claude" }),
+    });
+    await response.text();
+    await gateway.nextTrace();
+    expect(responseCache).toBe("absent");
+  });
+
   it("captures a bounded upstream error without request credentials", async () => {
     const upstream = Bun.serve({
       port: 0,

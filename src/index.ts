@@ -94,13 +94,14 @@ async function main(): Promise<void> {
       console.log(JSON.stringify(round, null, 2));
     } else {
       const report: BenchmarkReport = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         runId: `control-${Date.now()}`,
         createdAt: new Date().toISOString(),
         model,
+        providers: ["openrouter"],
         targetPrefixTokens,
         rounds: 1,
-        agents: [{ agent: "autohand", status: "completed", rounds: [round] }],
+        agents: [{ agent: "autohand", provider: "openrouter", status: "completed", rounds: [round] }],
       };
       console.log(renderMarkdownReport(report).replace("| autohand |", "| provider-control |"));
     }
@@ -109,6 +110,7 @@ async function main(): Promise<void> {
   if (command === "run") {
     const artifacts = await runBenchmark({
       agents: selectedAgents(options),
+      providers: ["openrouter"],
       model,
       targetPrefixTokens,
       rounds: positiveInteger(options, "rounds", 1),

@@ -93,6 +93,7 @@ export function extractTelemetry(value: unknown): CacheTelemetry {
       "input_tokens",
       "inputTokens",
       "totalInputTokens",
+      "promptTokenCount",
     ]) ?? lastUsageNumber(value, ["input"]);
   const outputTokens =
     lastNumber(value, [
@@ -101,6 +102,7 @@ export function extractTelemetry(value: unknown): CacheTelemetry {
       "output_tokens",
       "outputTokens",
       "totalOutputTokens",
+      "candidatesTokenCount",
     ]) ?? lastUsageNumber(value, ["output"]);
   const cacheReadTokens =
     lastNumber(value, [
@@ -109,6 +111,7 @@ export function extractTelemetry(value: unknown): CacheTelemetry {
       "cached_tokens",
       "cache_read_input_tokens",
       "cacheReadTokens",
+      "cachedContentTokenCount",
     ]) ?? lastUsageNumber(value, ["cacheRead"]);
   const cacheWriteTokens =
     lastNumber(value, [

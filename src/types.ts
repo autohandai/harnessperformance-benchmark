@@ -1,6 +1,10 @@
 export const AGENT_IDS = ["autohand", "pi", "codex", "cline"] as const;
 
 export type AgentId = (typeof AGENT_IDS)[number];
+
+export const PROVIDER_IDS = ["openrouter", "anthropic", "openai", "google", "nvidia", "zai"] as const;
+
+export type ProviderId = (typeof PROVIDER_IDS)[number];
 export type RunStatus = "completed" | "blocked" | "failed";
 export type TurnStatus = "completed" | "failed" | "timeout";
 export type CacheVerdict = "hit" | "miss" | "inconclusive" | "error";
@@ -20,6 +24,7 @@ export interface CacheTelemetry {
 
 export interface TurnMeasurement extends CacheTelemetry {
   phase: "cold" | "warm";
+  provider: ProviderId;
   elapsedMs: number;
   firstByteMs?: number;
   status: TurnStatus;
@@ -45,6 +50,7 @@ export interface BenchmarkRound extends PairClassification {
 
 export interface AgentBenchmarkResult {
   agent: AgentId;
+  provider: ProviderId;
   status: RunStatus;
   version?: string;
   rounds: BenchmarkRound[];
@@ -52,10 +58,11 @@ export interface AgentBenchmarkResult {
 }
 
 export interface BenchmarkReport {
-  schemaVersion: 1;
+  schemaVersion: 2;
   runId: string;
   createdAt: string;
   model: string;
+  providers: ProviderId[];
   targetPrefixTokens: number;
   rounds: number;
   agents: AgentBenchmarkResult[];

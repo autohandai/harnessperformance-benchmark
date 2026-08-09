@@ -4,10 +4,11 @@ import { runAgentRound } from "./adapters";
 import { runDoctor } from "./doctor";
 import { buildPromptPair } from "./prompt";
 import { renderMarkdownReport } from "./report";
-import type { AgentBenchmarkResult, AgentId, BenchmarkReport } from "./types";
+import type { AgentBenchmarkResult, AgentId, BenchmarkReport, ProviderId } from "./types";
 
 export interface BenchmarkOptions {
   agents: AgentId[];
+  providers: ProviderId[];
   model: string;
   rounds: number;
   targetPrefixTokens: number;
@@ -30,56 +31,63 @@ export async function runBenchmark(options: BenchmarkOptions): Promise<Benchmark
   const doctor = await runDoctor();
   const agents: AgentBenchmarkResult[] = [];
 
-  for (const agent of options.agents) {
-    const health = doctor.agents.find((entry) => entry.agent === agent);
-    if (!health?.ready) {
-      options.onProgress?.(`${agent}: blocked — ${health?.reason ?? "doctor did not return a result"}`);
+  for (const provider of options.providers) {
+    for (const agent of options.agents) {
+      const health = doctor.agents.find((entry) => entry.agent === agent);
+      const label = `${agent} × ${provider}`;
+      if (!health?.ready) {
+        options.onProgress?.(`${label}: blocked — ${health?.reason ?? "doctor did not return a result"}`);
+        agents.push({
+          agent,
+          provider,
+          status: "blocked",
+          rounds: [],
+          ...(health?.version === undefined ? {} : { version: health.version }),
+          error: health?.reason ?? "Agent health check failed.",
+        });
+        continue;
+      }
+
+      options.onProgress?.(`${label}: starting ${options.rounds} cold/warm round(s)`);
+      const rounds = [];
+      let error: string | undefined;
+      for (let round = 1; round <= options.rounds; round += 1) {
+        const prompt = buildPromptPair({ targetTokens: options.targetPrefixTokens, seed: `round-${round}` });
+        try {
+          const result = await runAgentRound({
+            agent,
+            provider,
+            model: options.model,
+            prompt,
+            round,
+            timeoutMs: options.timeoutMs,
+          });
+          rounds.push(result);
+          options.onProgress?.(`${label}: round ${round} ${result.verdict} — ${result.reason}`);
+        } catch (caught) {
+          error = caught instanceof Error ? caught.message : String(caught);
+          options.onProgress?.(`${label}: failed — ${error}`);
+          break;
+        }
+      }
+      const hasErrorRound = rounds.some((round) => round.verdict === "error");
       agents.push({
         agent,
-        status: "blocked",
-        rounds: [],
-        ...(health?.version === undefined ? {} : { version: health.version }),
-        error: health?.reason ?? "Agent health check failed.",
+        provider,
+        status: error || hasErrorRound ? "failed" : "completed",
+        rounds,
+        ...(health.version === undefined ? {} : { version: health.version }),
+        ...(error === undefined ? {} : { error }),
       });
-      continue;
     }
-
-    options.onProgress?.(`${agent}: starting ${options.rounds} cold/warm round(s)`);
-    const rounds = [];
-    let error: string | undefined;
-    for (let round = 1; round <= options.rounds; round += 1) {
-      const prompt = buildPromptPair({ targetTokens: options.targetPrefixTokens, seed: `round-${round}` });
-      try {
-        const result = await runAgentRound({
-          agent,
-          model: options.model,
-          prompt,
-          round,
-          timeoutMs: options.timeoutMs,
-        });
-        rounds.push(result);
-        options.onProgress?.(`${agent}: round ${round} ${result.verdict} — ${result.reason}`);
-      } catch (caught) {
-        error = caught instanceof Error ? caught.message : String(caught);
-        options.onProgress?.(`${agent}: failed — ${error}`);
-        break;
-      }
-    }
-    const hasErrorRound = rounds.some((round) => round.verdict === "error");
-    agents.push({
-      agent,
-      status: error || hasErrorRound ? "failed" : "completed",
-      rounds,
-      ...(health.version === undefined ? {} : { version: health.version }),
-      ...(error === undefined ? {} : { error }),
-    });
   }
 
   const report: BenchmarkReport = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     runId,
     createdAt: new Date().toISOString(),
     model: options.model,
+    providers: options.providers,
     targetPrefixTokens: options.targetPrefixTokens,
     rounds: options.rounds,
     agents,

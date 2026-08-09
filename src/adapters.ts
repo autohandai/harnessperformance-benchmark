@@ -12,11 +12,13 @@ import type {
   CacheTelemetry,
   GatewayTrace,
   ProcessResult,
+  ProviderId,
   TurnMeasurement,
 } from "./types";
 
 export interface AgentRoundOptions {
   agent: AgentId;
+  provider: ProviderId;
   model: string;
   prompt: PromptPair;
   round: number;
@@ -49,6 +51,7 @@ function consistentValue(
 
 export function measurementFromGatewayTraces(
   phase: "cold" | "warm",
+  provider: ProviderId,
   elapsedMs: number,
   traces: GatewayTrace[],
 ): TurnMeasurement {
@@ -56,6 +59,7 @@ export function measurementFromGatewayTraces(
   if (!trace) {
     return {
       phase,
+      provider,
       elapsedMs,
       status: "failed",
       telemetrySource: "none",
@@ -76,6 +80,7 @@ export function measurementFromGatewayTraces(
   const costUsd = sumWhenComplete(traces, "costUsd");
   return {
     phase,
+    provider,
     elapsedMs,
     status: successful ? "completed" : "failed",
     telemetrySource: "provider",
@@ -104,11 +109,13 @@ async function completedTurnTraces(gateway: Gateway, timeoutMs: number): Promise
 
 function fromProcess(
   phase: "cold" | "warm",
+  provider: ProviderId,
   result: ProcessResult,
   telemetry: CacheTelemetry,
 ): TurnMeasurement {
   return {
     phase,
+    provider,
     elapsedMs: result.elapsedMs,
     status: result.timedOut ? "timeout" : result.exitCode === 0 ? "completed" : "failed",
     telemetrySource: Object.keys(telemetry).length > 0 ? "agent" : "none",
@@ -307,6 +314,7 @@ async function executeRpcTurn(
   client: JsonlClient,
   gateway: Gateway,
   phase: "cold" | "warm",
+  provider: ProviderId,
   prompt: string,
   protocol: "autohand" | "pi",
   timeoutMs: number,
@@ -326,7 +334,12 @@ async function executeRpcTurn(
   }
   await client.waitFor(protocol === "autohand" ? isAutohandTurnEnd : isPiTurnEnd, after, timeoutMs);
   const elapsedMs = performance.now() - started;
-  return measurementFromGatewayTraces(phase, elapsedMs, await completedTurnTraces(gateway, timeoutMs));
+  return measurementFromGatewayTraces(
+    phase,
+    provider,
+    elapsedMs,
+    await completedTurnTraces(gateway, timeoutMs),
+  );
 }
 
 async function runAutohand(
@@ -387,6 +400,7 @@ async function runAutohand(
       client,
       gateway,
       "cold",
+      options.provider,
       options.prompt.cold,
       "autohand",
       options.timeoutMs,
@@ -395,6 +409,7 @@ async function runAutohand(
       client,
       gateway,
       "warm",
+      options.provider,
       options.prompt.followUp,
       "autohand",
       options.timeoutMs,
@@ -472,11 +487,20 @@ async function runPi(options: AgentRoundOptions, root: string, workspace: string
     },
   );
   try {
-    const cold = await executeRpcTurn(client, gateway, "cold", options.prompt.cold, "pi", options.timeoutMs);
+    const cold = await executeRpcTurn(
+      client,
+      gateway,
+      "cold",
+      options.provider,
+      options.prompt.cold,
+      "pi",
+      options.timeoutMs,
+    );
     const warm = await executeRpcTurn(
       client,
       gateway,
       "warm",
+      options.provider,
       options.prompt.followUp,
       "pi",
       options.timeoutMs,
@@ -542,16 +566,18 @@ async function runCodex(
     if (coldProcess.exitCode === 0 && !coldProcess.timedOut) {
       cold = measurementFromGatewayTraces(
         "cold",
+        options.provider,
         coldProcess.elapsedMs,
         await completedTurnTraces(gateway, options.timeoutMs),
       );
       threadId = findString(parseJsonLines(coldProcess.stdout), ["thread_id", "threadId"]);
     } else {
-      cold = fromProcess("cold", coldProcess, extractTelemetryFromText(coldProcess.stdout));
+      cold = fromProcess("cold", options.provider, coldProcess, extractTelemetryFromText(coldProcess.stdout));
     }
     if (!threadId) {
       const warm: TurnMeasurement = {
         phase: "warm",
+        provider: options.provider,
         elapsedMs: 0,
         status: "failed",
         telemetrySource: "none",
@@ -571,10 +597,11 @@ async function runCodex(
       warmProcess.exitCode === 0 && !warmProcess.timedOut
         ? measurementFromGatewayTraces(
             "warm",
+            options.provider,
             warmProcess.elapsedMs,
             await completedTurnTraces(gateway, options.timeoutMs),
           )
-        : fromProcess("warm", warmProcess, extractTelemetryFromText(warmProcess.stdout));
+        : fromProcess("warm", options.provider, warmProcess, extractTelemetryFromText(warmProcess.stdout));
     return roundResult(options.round, cold, warm);
   } finally {
     await gateway.close();
@@ -635,7 +662,7 @@ async function runCline(
     cwd: workspace,
     timeoutMs: options.timeoutMs,
   });
-  const cold = fromProcess("cold", coldProcess, clineTelemetry(options, coldProcess));
+  const cold = fromProcess("cold", options.provider, coldProcess, clineTelemetry(options, coldProcess));
   const warmProcess = await runProcess({
     command: buildClineCommand({
       dataDirectory,
@@ -647,7 +674,7 @@ async function runCline(
     cwd: workspace,
     timeoutMs: options.timeoutMs,
   });
-  const warm = fromProcess("warm", warmProcess, clineTelemetry(options, warmProcess));
+  const warm = fromProcess("warm", options.provider, warmProcess, clineTelemetry(options, warmProcess));
   return roundResult(options.round, cold, warm);
 }
 

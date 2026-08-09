@@ -5,15 +5,17 @@ import type { BenchmarkReport } from "../src/types";
 describe("renderMarkdownReport", () => {
   it("keeps failures and inconclusive runs visible", () => {
     const report: BenchmarkReport = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       runId: "run-test",
       createdAt: "2026-08-01T00:00:00.000Z",
       model: "openrouter/free",
+      providers: ["openrouter"],
       targetPrefixTokens: 4_096,
       rounds: 1,
       agents: [
         {
           agent: "pi",
+          provider: "openrouter",
           status: "blocked",
           version: "0.82.1",
           rounds: [],

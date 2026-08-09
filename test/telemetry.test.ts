@@ -43,6 +43,24 @@ describe("extractTelemetry", () => {
     ).toMatchObject({ inputTokens: 7_000, outputTokens: 10, cacheReadTokens: 6_000 });
   });
 
+  it("normalizes Gemini usageMetadata", () => {
+    const telemetry = extractTelemetry({
+      modelVersion: "gemini-3.6-flash",
+      usageMetadata: {
+        promptTokenCount: 5_000,
+        candidatesTokenCount: 15,
+        cachedContentTokenCount: 4_096,
+        totalTokenCount: 5_015,
+      },
+    });
+
+    expect(telemetry).toMatchObject({
+      inputTokens: 5_000,
+      outputTokens: 15,
+      cacheReadTokens: 4_096,
+    });
+  });
+
   it("does not replace Cline usage with zero-valued model pricing", () => {
     const telemetry = extractTelemetry({
       type: "run_result",
@@ -74,6 +92,7 @@ describe("extractTelemetry", () => {
 describe("classifyPair", () => {
   const turn = (overrides: Partial<TurnMeasurement>): TurnMeasurement => ({
     phase: "cold",
+    provider: "openrouter",
     elapsedMs: 1_000,
     status: "completed",
     telemetrySource: "provider",
@@ -142,7 +161,7 @@ describe("classifyPair", () => {
 
 describe("measurementFromGatewayTraces", () => {
   it("aggregates every request in an agent turn and exposes mixed routing", () => {
-    const measurement = measurementFromGatewayTraces("cold", 2_000, [
+    const measurement = measurementFromGatewayTraces("cold", "openrouter", 2_000, [
       {
         requestId: "one",
         path: "/v1/chat/completions",

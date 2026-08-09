@@ -1,20 +1,26 @@
-import { resolveOpenRouterCredential } from "./credentials";
 import { startGateway } from "./gateway";
 import { buildPromptPair } from "./prompt";
+import { getProvider, resolveProviderCredential } from "./providers";
 import { classifyPair } from "./telemetry";
-import type { BenchmarkRound, GatewayTrace, TurnMeasurement } from "./types";
+import type { BenchmarkRound, GatewayTrace, ProviderId, TurnMeasurement } from "./types";
 
 export interface ControlOptions {
+  provider: ProviderId;
   model: string;
   targetPrefixTokens: number;
   round: number;
   timeoutMs: number;
 }
 
-function measurement(phase: "cold" | "warm", elapsedMs: number, trace: GatewayTrace): TurnMeasurement {
+function measurement(
+  phase: "cold" | "warm",
+  provider: ProviderId,
+  elapsedMs: number,
+  trace: GatewayTrace,
+): TurnMeasurement {
   return {
     phase,
-    provider: "openrouter",
+    provider,
     elapsedMs,
     status: trace.statusCode >= 200 && trace.statusCode < 300 ? "completed" : "failed",
     telemetrySource: "provider",
@@ -34,18 +40,28 @@ function measurement(phase: "cold" | "warm", elapsedMs: number, trace: GatewayTr
 }
 
 export async function runControlRound(options: ControlOptions): Promise<BenchmarkRound> {
-  const credential = await resolveOpenRouterCredential();
-  if (!credential) throw new Error("An OpenRouter API key is required for a live benchmark");
+  const credential = await resolveProviderCredential(options.provider);
+  if (!credential) {
+    throw new Error(`A ${getProvider(options.provider).label} API key is required for a live benchmark`);
+  }
   const prompt = buildPromptPair({
     targetTokens: options.targetPrefixTokens,
     seed: `control-${options.round}`,
   });
   const sessionId = `kv-cache-bench-${crypto.randomUUID()}`;
-  const gateway = await startGateway();
+  const injectAuthKey = options.provider === "openrouter" ? undefined : credential.key;
+  const gateway = await startGateway({
+    provider: options.provider,
+    openaiCompat: true,
+    ...(injectAuthKey === undefined ? {} : { injectAuthKey }),
+  });
   try {
     const execute = async (phase: "cold" | "warm", content: string): Promise<TurnMeasurement> => {
       const tracePromise = gateway.nextTrace(options.timeoutMs);
       const started = performance.now();
+      // `session_id` is OpenRouter's sticky-routing hint; stricter OpenAI-compatible
+      // providers reject unknown body params, so only send it for OpenRouter.
+      const isOpenRouter = options.provider === "openrouter";
       const response = await fetch(`${gateway.baseUrl}/chat/completions`, {
         method: "POST",
         headers: {
@@ -58,13 +74,13 @@ export async function runControlRound(options: ControlOptions): Promise<Benchmar
           messages: [{ role: "user", content }],
           max_tokens: 24,
           temperature: 0,
-          session_id: sessionId,
+          ...(isOpenRouter ? { session_id: sessionId } : {}),
         }),
       });
       await response.arrayBuffer();
       const elapsedMs = performance.now() - started;
       const trace = await tracePromise;
-      return measurement(phase, elapsedMs, trace);
+      return measurement(phase, options.provider, elapsedMs, trace);
     };
     const cold = await execute("cold", prompt.cold);
     const warm = await execute("warm", prompt.warm);

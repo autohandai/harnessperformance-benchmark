@@ -1,8 +1,8 @@
 import { access } from "node:fs/promises";
 import { join } from "node:path";
-import { resolveOpenRouterCredential } from "./credentials";
 import { runProcess } from "./process";
-import { AGENT_IDS, type AgentId } from "./types";
+import { resolveProviderCredential } from "./providers";
+import { AGENT_IDS, type AgentId, PROVIDER_IDS, type ProviderId } from "./types";
 
 export interface DoctorEntry {
   agent: AgentId;
@@ -12,8 +12,13 @@ export interface DoctorEntry {
   reason?: string;
 }
 
+export interface ProviderCredentialStatus {
+  provider: ProviderId;
+  credential: boolean;
+}
+
 export interface DoctorReport {
-  openRouterCredential: boolean;
+  providers: ProviderCredentialStatus[];
   agents: DoctorEntry[];
 }
 
@@ -105,14 +110,23 @@ async function inspectAutohand(): Promise<DoctorEntry> {
   };
 }
 
+export async function resolveProviderCredentials(): Promise<ProviderCredentialStatus[]> {
+  return Promise.all(
+    PROVIDER_IDS.map(async (provider) => ({
+      provider,
+      credential: (await resolveProviderCredential(provider)) !== undefined,
+    })),
+  );
+}
+
 export async function runDoctor(): Promise<DoctorReport> {
-  const [credential, entries] = await Promise.all([
-    resolveOpenRouterCredential(),
+  const [credentials, entries] = await Promise.all([
+    resolveProviderCredentials(),
     Promise.all([inspectAutohand(), inspectCommand("pi"), inspectCommand("codex"), inspectCommand("cline")]),
   ]);
   const byAgent = new Map(entries.map((entry) => [entry.agent, entry]));
   return {
-    openRouterCredential: credential !== undefined,
+    providers: credentials,
     agents: AGENT_IDS.map((agent) => {
       const entry = byAgent.get(agent);
       if (!entry) throw new Error(`Doctor did not inspect ${agent}`);
@@ -122,7 +136,12 @@ export async function runDoctor(): Promise<DoctorReport> {
 }
 
 export function renderDoctor(report: DoctorReport): string {
-  const lines = [`OpenRouter credential: ${report.openRouterCredential ? "available" : "missing"}`];
+  const available = report.providers.filter((entry) => entry.credential).map((entry) => entry.provider);
+  const missing = report.providers.filter((entry) => !entry.credential).map((entry) => entry.provider);
+  const lines = [
+    `Provider credentials available: ${available.length ? available.join(", ") : "none"}`,
+    `Provider credentials missing: ${missing.length ? missing.join(", ") : "none"}`,
+  ];
   for (const entry of report.agents) {
     lines.push(
       `${entry.ready ? "READY" : "BLOCKED"} ${entry.agent}${entry.version ? ` (${entry.version})` : ""}${entry.reason ? ` — ${entry.reason}` : ""}`,

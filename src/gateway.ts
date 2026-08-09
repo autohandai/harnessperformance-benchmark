@@ -5,6 +5,14 @@ import type { GatewayTrace, ProviderId } from "./types";
 export interface GatewayOptions {
   provider?: ProviderId;
   upstreamBaseUrl?: string;
+  /**
+   * When set, the gateway rewrites outgoing auth to the provider's scheme using this key,
+   * so agents configured for one provider can be retargeted at another without knowing its
+   * credential. Omit to forward the caller's own auth header unchanged (OpenRouter path).
+   */
+  injectAuthKey?: string;
+  /** Target the provider's OpenAI-compatible endpoint (and Bearer auth) when it has one. */
+  openaiCompat?: boolean;
   port?: number;
 }
 
@@ -59,7 +67,9 @@ function upstreamError(text: string, status: number): string {
 
 export async function startGateway(options: GatewayOptions = {}): Promise<Gateway> {
   const provider = options.provider ?? "openrouter";
-  const upstreamBaseUrl = options.upstreamBaseUrl ?? getProvider(provider).baseUrl;
+  const providerConfig = getProvider(provider);
+  const compatBase = options.openaiCompat ? providerConfig.openAiCompatibleBaseUrl : undefined;
+  const upstreamBaseUrl = options.upstreamBaseUrl ?? compatBase ?? providerConfig.baseUrl;
   const traces: GatewayTrace[] = [];
   const waiters: TraceWaiter[] = [];
 
@@ -105,6 +115,16 @@ export async function startGateway(options: GatewayOptions = {}): Promise<Gatewa
       // OpenRouter has a separate identical-response cache that would masquerade as a
       // prompt-cache hit; disable it. Other providers have no such response cache.
       if (provider === "openrouter") headers.set("x-openrouter-cache", "false");
+      // Retarget auth to the resolved provider so agents need not carry its credential.
+      if (options.injectAuthKey !== undefined) {
+        headers.delete("authorization");
+        headers.delete("x-api-key");
+        headers.delete("x-goog-api-key");
+        const injected = options.openaiCompat
+          ? { authorization: `Bearer ${options.injectAuthKey}` }
+          : providerConfig.authHeaders(options.injectAuthKey);
+        for (const [name, value] of Object.entries(injected)) headers.set(name, value);
+      }
 
       try {
         const upstreamResponse = await fetch(targetUrl(upstreamBaseUrl, incomingUrl), {

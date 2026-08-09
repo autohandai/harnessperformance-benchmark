@@ -1,8 +1,10 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { runAgentRound } from "./adapters";
+import { capabilityFor } from "./capabilities";
 import { runDoctor } from "./doctor";
 import { buildPromptPair } from "./prompt";
+import { getProvider, resolveProviderCredential } from "./providers";
 import { renderMarkdownReport } from "./report";
 import type { AgentBenchmarkResult, AgentId, BenchmarkReport, ProviderId } from "./types";
 
@@ -32,18 +34,27 @@ export async function runBenchmark(options: BenchmarkOptions): Promise<Benchmark
   const agents: AgentBenchmarkResult[] = [];
 
   for (const provider of options.providers) {
+    const credential = await resolveProviderCredential(provider);
     for (const agent of options.agents) {
       const health = doctor.agents.find((entry) => entry.agent === agent);
+      const capability = capabilityFor(agent, provider);
       const label = `${agent} × ${provider}`;
-      if (!health?.ready) {
-        options.onProgress?.(`${label}: blocked — ${health?.reason ?? "doctor did not return a result"}`);
+      const blockedReason = !health?.ready
+        ? (health?.reason ?? "doctor did not return a result")
+        : !capability.supported
+          ? capability.reason
+          : !credential
+            ? `No ${getProvider(provider).label} credential available.`
+            : undefined;
+      if (blockedReason !== undefined) {
+        options.onProgress?.(`${label}: blocked — ${blockedReason}`);
         agents.push({
           agent,
           provider,
           status: "blocked",
           rounds: [],
           ...(health?.version === undefined ? {} : { version: health.version }),
-          error: health?.reason ?? "Agent health check failed.",
+          error: blockedReason,
         });
         continue;
       }
@@ -76,7 +87,7 @@ export async function runBenchmark(options: BenchmarkOptions): Promise<Benchmark
         provider,
         status: error || hasErrorRound ? "failed" : "completed",
         rounds,
-        ...(health.version === undefined ? {} : { version: health.version }),
+        ...(health?.version === undefined ? {} : { version: health.version }),
         ...(error === undefined ? {} : { error }),
       });
     }

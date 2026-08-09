@@ -5,9 +5,10 @@ import { runControlRound } from "./control";
 import { buildDashboardDataset, loadReports } from "./dashboard/data";
 import { renderDashboard } from "./dashboard/render";
 import { renderDoctor, runDoctor } from "./doctor";
+import { isProviderId } from "./providers";
 import { renderMarkdownReport } from "./report";
 import { runBenchmark } from "./runner";
-import { AGENT_IDS, type AgentId, type BenchmarkReport } from "./types";
+import { AGENT_IDS, type AgentId, type BenchmarkReport, PROVIDER_IDS, type ProviderId } from "./types";
 
 interface ParsedOptions {
   values: Map<string, string>;
@@ -57,17 +58,32 @@ function selectedAgents(options: ParsedOptions): AgentId[] {
   return values as AgentId[];
 }
 
+function selectedProviders(options: ParsedOptions): ProviderId[] {
+  const raw = options.values.get("providers") ?? options.values.get("provider");
+  if (!raw) return ["openrouter"];
+  const values = raw
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const invalid = values.filter((value) => !isProviderId(value));
+  if (invalid.length > 0) {
+    throw new Error(`Unknown providers: ${invalid.join(", ")} (known: ${PROVIDER_IDS.join(", ")})`);
+  }
+  return values as ProviderId[];
+}
+
 function help(): string {
   return `KV cache benchmark for OpenRouter-backed coding agents
 
 Usage:
   bun run benchmark -- doctor [--json]
-  bun run benchmark -- control [--model openrouter/free] [--prefix-tokens 4096]
-  bun run benchmark -- run [--agents autohand,pi,codex,cline] [options]
+  bun run benchmark -- control [--provider openrouter] [--model openrouter/free] [--prefix-tokens 4096]
+  bun run benchmark -- run [--agents autohand,pi,codex,cline] [--providers openrouter,nvidia] [options]
   bun run benchmark -- dashboard [--results results] [--output results/dashboard.html]
 
 Options:
-  --model <id>             OpenRouter model or router (default: openrouter/free)
+  --model <id>             Model id for the selected provider(s) (default: openrouter/free)
+  --providers <list>       Providers to benchmark: ${PROVIDER_IDS.join(", ")} (default: openrouter)
   --prefix-tokens <n>      Estimated stable prefix size (default: 4096)
   --rounds <n>             Cold/warm pairs per agent (default: 1)
   --timeout-seconds <n>    Per-turn timeout (default: 180)
@@ -95,7 +111,8 @@ async function main(): Promise<void> {
   const targetPrefixTokens = positiveInteger(options, "prefix-tokens", 4_096);
   const timeoutMs = positiveInteger(options, "timeout-seconds", 180) * 1_000;
   if (command === "control") {
-    const round = await runControlRound({ model, targetPrefixTokens, round: 1, timeoutMs });
+    const provider = selectedProviders(options)[0] ?? "openrouter";
+    const round = await runControlRound({ provider, model, targetPrefixTokens, round: 1, timeoutMs });
     if (options.flags.has("json")) {
       console.log(JSON.stringify(round, null, 2));
     } else {
@@ -104,10 +121,10 @@ async function main(): Promise<void> {
         runId: `control-${Date.now()}`,
         createdAt: new Date().toISOString(),
         model,
-        providers: ["openrouter"],
+        providers: [provider],
         targetPrefixTokens,
         rounds: 1,
-        agents: [{ agent: "autohand", provider: "openrouter", status: "completed", rounds: [round] }],
+        agents: [{ agent: "autohand", provider, status: "completed", rounds: [round] }],
       };
       console.log(renderMarkdownReport(report).replace("| autohand |", "| provider-control |"));
     }
@@ -127,7 +144,7 @@ async function main(): Promise<void> {
   if (command === "run") {
     const artifacts = await runBenchmark({
       agents: selectedAgents(options),
-      providers: ["openrouter"],
+      providers: selectedProviders(options),
       model,
       targetPrefixTokens,
       rounds: positiveInteger(options, "rounds", 1),

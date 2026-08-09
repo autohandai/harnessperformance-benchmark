@@ -1,10 +1,12 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { resolveAutohandAuthToken, resolveOpenRouterCredential } from "./credentials";
+import { assertSupported } from "./capabilities";
+import { resolveAutohandAuthToken } from "./credentials";
 import { type Gateway, startGateway } from "./gateway";
 import { conciseProcessError, runProcess } from "./process";
 import type { PromptPair } from "./prompt";
+import { getProvider, resolveProviderCredential } from "./providers";
 import { classifyPair, extractTelemetry, extractTelemetryFromText } from "./telemetry";
 import type {
   AgentId,
@@ -23,6 +25,24 @@ export interface AgentRoundOptions {
   prompt: PromptPair;
   round: number;
   timeoutMs: number;
+  /** Resolved provider credential, set by runAgentRound; agents that need a key in config use it. */
+  credentialKey?: string;
+  /** When set, the gateway retargets auth to the provider using this key (non-OpenRouter runs). */
+  injectAuthKey?: string;
+}
+
+interface GatewayRoute {
+  provider: ProviderId;
+  openaiCompat: true;
+  injectAuthKey?: string;
+}
+
+function gatewayRoute(options: AgentRoundOptions): GatewayRoute {
+  return {
+    provider: options.provider,
+    openaiCompat: true,
+    ...(options.injectAuthKey === undefined ? {} : { injectAuthKey: options.injectAuthKey }),
+  };
 }
 
 const AUTOHAND_REPO =
@@ -350,10 +370,8 @@ async function runAutohand(
   const home = join(root, "autohand-home");
   await mkdir(home, { recursive: true });
   const authToken = await resolveAutohandAuthToken();
-  const openRouterCredential = await resolveOpenRouterCredential();
   if (!authToken) throw new Error("Autohand RPC requires an existing authenticated Autohand session");
-  if (!openRouterCredential) throw new Error("Autohand requires an OpenRouter API key");
-  const gateway = await startGateway();
+  const gateway = await startGateway(gatewayRoute(options));
   const configPath = join(home, "config.json");
   await writeFile(
     configPath,
@@ -362,7 +380,7 @@ async function runAutohand(
         provider: "openrouter",
         auth: { token: authToken },
         openrouter: {
-          apiKey: openRouterCredential.key,
+          apiKey: options.credentialKey ?? "gateway-managed",
           model: options.model,
           baseUrl: gateway.baseUrl,
         },
@@ -424,7 +442,7 @@ async function runAutohand(
 async function runPi(options: AgentRoundOptions, root: string, workspace: string): Promise<BenchmarkRound> {
   const configDirectory = join(root, "pi-agent");
   await mkdir(configDirectory, { recursive: true });
-  const gateway = await startGateway();
+  const gateway = await startGateway(gatewayRoute(options));
   await writeFile(
     join(configDirectory, "models.json"),
     `${JSON.stringify(
@@ -534,7 +552,7 @@ async function runCodex(
   root: string,
   workspace: string,
 ): Promise<BenchmarkRound> {
-  const gateway = await startGateway();
+  const gateway = await startGateway(gatewayRoute(options));
   const sessionAffinityId = `codex-${crypto.randomUUID()}`;
   const codexHome = join(root, "codex-home");
   await mkdir(codexHome, { recursive: true });
@@ -679,8 +697,19 @@ async function runCline(
 }
 
 export async function runAgentRound(options: AgentRoundOptions): Promise<BenchmarkRound> {
-  const credential = await resolveOpenRouterCredential();
-  if (!credential) throw new Error("An OpenRouter API key is required for a live benchmark");
+  assertSupported(options.agent, options.provider);
+  const credential = await resolveProviderCredential(options.provider);
+  if (!credential) {
+    throw new Error(`A ${getProvider(options.provider).label} API key is required for a live benchmark`);
+  }
+  // Agents speak OpenAI-compatible to the gateway; for non-OpenRouter providers the gateway
+  // injects the real downstream auth, so the agent-visible key is only a placeholder.
+  const injectAuthKey = options.provider === "openrouter" ? undefined : credential.key;
+  const runOptions: AgentRoundOptions = {
+    ...options,
+    credentialKey: credential.key,
+    ...(injectAuthKey === undefined ? {} : { injectAuthKey }),
+  };
   const root = await mkdtemp(join(tmpdir(), `kv-cache-bench-${options.agent}-`));
   const previousKey = process.env.OPENROUTER_API_KEY;
   process.env.OPENROUTER_API_KEY = credential.key;
@@ -691,15 +720,15 @@ export async function runAgentRound(options: AgentRoundOptions): Promise<Benchma
     "# KV cache benchmark workspace\n\nThis isolated workspace must remain unchanged.\n",
   );
   try {
-    switch (options.agent) {
+    switch (runOptions.agent) {
       case "autohand":
-        return await runAutohand(options, root, workspace);
+        return await runAutohand(runOptions, root, workspace);
       case "pi":
-        return await runPi(options, root, workspace);
+        return await runPi(runOptions, root, workspace);
       case "codex":
-        return await runCodex(options, root, workspace);
+        return await runCodex(runOptions, root, workspace);
       case "cline":
-        return await runCline(options, root, workspace);
+        return await runCline(runOptions, root, workspace);
     }
     throw new Error(`Unsupported agent: ${String(options.agent)}`);
   } finally {

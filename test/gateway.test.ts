@@ -81,6 +81,36 @@ describe("OpenRouterGateway", () => {
     expect(responseCache).toBe("absent");
   });
 
+  it("injects the provider credential and forgets the agent-supplied auth", async () => {
+    let authorization = "absent";
+    let placeholderLeaked = false;
+    const upstream = Bun.serve({
+      port: 0,
+      fetch(request) {
+        authorization = request.headers.get("authorization") ?? "absent";
+        placeholderLeaked = authorization.includes("placeholder");
+        return Response.json({ usage: { prompt_tokens: 5, completion_tokens: 1 } });
+      },
+    });
+    servers.push(upstream);
+    const gateway = await startGateway({
+      provider: "nvidia",
+      upstreamBaseUrl: upstream.url.toString(),
+      injectAuthKey: "real-nvidia-key",
+      openaiCompat: true,
+    });
+    gateways.push(gateway);
+    const response = await fetch(`${gateway.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: { authorization: "Bearer placeholder", "content-type": "application/json" },
+      body: JSON.stringify({ model: "nv/model" }),
+    });
+    await response.text();
+    await gateway.nextTrace();
+    expect(authorization).toBe("Bearer real-nvidia-key");
+    expect(placeholderLeaked).toBe(false);
+  });
+
   it("captures a bounded upstream error without request credentials", async () => {
     const upstream = Bun.serve({
       port: 0,

@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 2,
+  "runId": "run-2026-09-22T06-21-52-218Z",
+  "createdAt": "2026-09-22T06:21:54.721Z",
+  "model": "openrouter/free",
+  "providers": [
+    "openrouter"
+  ],
+  "targetPrefixTokens": 4096,
+  "rounds": 3,
+  "agents": [
+    {
+      "agent": "autohand",
+      "provider": "openrouter",
+      "status": "blocked",
+      "rounds": [],
+      "error": "KV-cache worktree not found at /Users/igorcosta/Documents/autohand/cli-3-kv_cache_optimisations."
+    },
+    {
+      "agent": "pi",
+      "provider": "openrouter",
+      "status": "blocked",
+      "rounds": [],
+      "version": "0.83.0",
+      "error": "No OpenRouter credential available."
+    },
+    {
+      "agent": "codex",
+      "provider": "openrouter",
+      "status": "blocked",
+      "rounds": [],
+      "error": "Executable not found on PATH."
+    },
+    {
+      "agent": "cline",
+      "provider": "openrouter",
+      "status": "blocked",
+      "rounds": [],
+      "version": "3.0.48",
+      "error": "No OpenRouter credential available."
+    }
+  ]
+}
